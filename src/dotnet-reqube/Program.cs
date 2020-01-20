@@ -46,7 +46,7 @@ namespace ReQube
 
                         foreach (var sonarQubeReport in sonarQubeReports)
                         {
-                            var filePath = CombineOutputPath(options, Path.Combine(GetFolderProject(solution, sonarQubeReport.ProjectName), options.Output));
+                            var filePath = CombineOutputPath(options, Path.Combine(GetFolderProject(solution, sonarQubeReport), options.Output));
                             WriteReport(filePath, sonarQubeReport);
                         }
 
@@ -78,14 +78,36 @@ namespace ReQube
             }
         }
 
-        private static string GetFolderProject(ISolution solution, string projectName)
+        private static string GetFolderProject(ISolution solution, SonarQubeReport sonarQubeReport)
         {
-            var path = solution.Projects
-                .Where(x => x.Name == projectName  && x.TypeGuid != Constants.ProjectTypeGuids["Solution Folder"])
+            var paths = solution.Projects
+                .Where(x => x.Name == sonarQubeReport.ProjectName  && x.TypeGuid != Constants.ProjectTypeGuids["Solution Folder"])
                 .Select(x => x.Path)
-                .FirstOrDefault();
+                .ToList();
 
-            return path != null ? Path.GetDirectoryName(path) : projectName;
+            string path = null;
+
+            if (paths.Count > 1)
+            {
+                //Si hay más de un resultado tenemos que tomar como referencia alguna de las incidencias para detectar que ruta es la que corresponde.
+                var sampleIssue = sonarQubeReport.Issues.FirstOrDefault();
+                if (sampleIssue != null)
+                {
+                    var rootPath = sampleIssue.PrimaryLocation.FilePath.Split(@"\").FirstOrDefault();
+                    path = solution.Projects
+                        .Where(x => x.Name == sonarQubeReport.ProjectName 
+                                    && x.TypeGuid != Constants.ProjectTypeGuids["Solution Folder"] 
+                                    && x.Path.Split(@"\").FirstOrDefault() == rootPath)
+                        .Select(x => x.Path)
+                        .FirstOrDefault();
+                }
+            }
+            else
+            {
+                path = paths.FirstOrDefault();
+            }
+
+            return path != null ? Path.GetDirectoryName(path) : sonarQubeReport.ProjectName;
         }
 
         private static string CombineOutputPath(Options options, string directory)
