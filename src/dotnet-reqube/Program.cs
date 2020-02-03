@@ -29,11 +29,12 @@ namespace ReQube
                 var serializer = new XmlSerializer(typeof(Report));
 
                 Console.WriteLine("Reading input file {0}", options.Input);
+                var solutionDirectoryDepth = GetSolutionDirectoryDepth(options.Input);
                 reader = new StreamReader(options.Input);
                 var report = (Report)serializer.Deserialize(reader);
                 reader.Dispose();
 
-                var sonarQubeReports = Map(report);
+                var sonarQubeReports = Map(report,solutionDirectoryDepth);
 
                 // We need to write dummy report because SonarQube MSBuild reads a report from the root
                 if (string.IsNullOrEmpty(options.Project))
@@ -46,11 +47,11 @@ namespace ReQube
 
                         foreach (var sonarQubeReport in sonarQubeReports)
                         {
-                            var filePath = CombineOutputPath(options, Path.Combine(GetFolderProject(solution, sonarQubeReport), options.Output));
+                            var filePath = CombineOutputPath(options, Path.Combine(GetFolderProject(solution, sonarQubeReport, solutionDirectoryDepth), options.Output));
                             WriteReport(filePath, sonarQubeReport);
                         }
 
-                        TryWriteMissingReports(solution, options, sonarQubeReports);
+                        TryWriteMissingReports(solution, options, sonarQubeReports, solutionDirectoryDepth);
                     }
                     catch (Exception e)
                     {
@@ -78,7 +79,12 @@ namespace ReQube
             }
         }
 
-        private static string GetFolderProject(ISolution solution, SonarQubeReport sonarQubeReport)
+        private static int GetSolutionDirectoryDepth(string path)
+        {
+            return path.Split(@"\").Length - 2;
+        }
+
+        private static string GetFolderProject(ISolution solution, SonarQubeReport sonarQubeReport,int solutionDirectoryDepth)
         {
             var paths = solution.Projects
                 .Where(x => x.Name == sonarQubeReport.ProjectName  && x.TypeGuid != Constants.ProjectTypeGuids["Solution Folder"])
@@ -106,6 +112,9 @@ namespace ReQube
             {
                 path = paths.FirstOrDefault();
             }
+
+            if (path != null && solutionDirectoryDepth>0)
+                path = RemoveUpperDirectories(path, solutionDirectoryDepth);
 
             return path != null ? Path.GetDirectoryName(path) : sonarQubeReport.ProjectName;
         }
@@ -144,7 +153,7 @@ namespace ReQube
                 .WithNotParsed(errors => HandleParseError(errors));
         }
 
-        private static List<SonarQubeReport> Map(Report report)
+        private static List<SonarQubeReport> Map(Report report, int solutionDirectoryDepth)
         {
             var reportIssueTypes = report.IssueTypes.ToDictionary(t => t.Id, type => type);
 
@@ -190,6 +199,9 @@ namespace ReQube
                                                          }
                                              };
 
+                    if (solutionDirectoryDepth>0)
+                        sonarQubeIssue.PrimaryLocation.FilePath = RemoveUpperDirectories(sonarQubeIssue.PrimaryLocation.FilePath, solutionDirectoryDepth + 1);
+
                     sonarQubeReport.Issues.Add(sonarQubeIssue);
                 }
 
@@ -199,7 +211,14 @@ namespace ReQube
             return sonarQubeReports;
         }
 
-        private static void TryWriteMissingReports(ISolution solution, Options options, List<SonarQubeReport> sonarQubeReports)
+        private static string RemoveUpperDirectories(string filePath, int numDirectoriesToRemove)
+        {
+            var parts=filePath.Split(@"\");
+            var result = string.Join(@"\",parts.Skip(numDirectoriesToRemove));
+            return result;
+        }
+
+        private static void TryWriteMissingReports(ISolution solution, Options options, List<SonarQubeReport> sonarQubeReports, int solutionDirectoryDepth)
         {
             try
             {
@@ -217,6 +236,9 @@ namespace ReQube
                     }
 
                     var projectPath = Path.GetDirectoryName(project.Path);
+                    if (projectPath != null && solutionDirectoryDepth>0)
+                        projectPath = RemoveUpperDirectories(projectPath, solutionDirectoryDepth);
+
                     var reportPath = CombineOutputPath(options, Path.Combine(projectPath, options.Output));
                     WriteReport(reportPath, SonarQubeReport.Empty);
                 }
